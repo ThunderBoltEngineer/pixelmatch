@@ -4,8 +4,6 @@ module.exports = pixelmatch;
 
 function pixelmatch(img1, img2, output, width, height, options) {
 
-    if (img1.length !== img2.length) throw new Error('Image sizes do not match.');
-
     if (!options) options = {};
 
     var threshold = options.threshold === undefined ? 0.1 : options.threshold;
@@ -22,25 +20,31 @@ function pixelmatch(img1, img2, output, width, height, options) {
             var pos = (y * width + x) * 4;
 
             // squared YUV distance between colors at this pixel position
-            var delta = colorDelta(img1, img2, pos, pos);
-
+            var deltaInfo = colorDelta(img1, img2, pos, pos)
+            var delta = deltaInfo.delta;
+            var diffResult = deltaInfo.diffResult;
+            
             // the color difference is above the threshold
-            if (delta > maxDelta) {
+            if (diffResult !== 0) {
                 // check it's a real rendering difference or just anti-aliasing
                 if (!options.includeAA && (antialiased(img1, x, y, width, height, img2) ||
                                    antialiased(img2, x, y, width, height, img1))) {
                     // one of the pixels is anti-aliasing; draw as yellow and do not count as difference
-                    if (output) drawPixel(output, pos, 255, 255, 0);
-
+                    //if (output) drawPixel(output, pos, 255, 255, 0);
+                    // pixels are similar; draw background as grayscale image blended with white
+                    var val = blend(grayPixel(img1, pos), 0.5);
+                    drawPixel(output, pos, val, val, val);                    
                 } else {
                     // found substantial difference not caused by anti-aliasing; draw it as red
-                    if (output) drawPixel(output, pos, 255, 0, 0);
+                    if (output && diffResult === -1) drawPixel(output, pos, 255, 0, 0);
+                    if (output && diffResult === 1) drawPixel(output, pos, 0, 0, 255);
+                    // if (output) drawPixel(output, pos, 255, 0, 0);
                     diff++;
                 }
 
             } else if (output) {
                 // pixels are similar; draw background as grayscale image blended with white
-                var val = blend(grayPixel(img1, pos), 0.1);
+                var val = blend(grayPixel(img1, pos), 0.5);
                 drawPixel(output, pos, val, val, val);
             }
         }
@@ -72,7 +76,7 @@ function antialiased(img, x1, y1, width, height, img2) {
             if (x === x1 && y === y1) continue;
 
             // brightness delta between the center pixel and adjacent one
-            var delta = colorDelta(img, img, pos, (y * width + x) * 4, true);
+            var delta = colorDelta(img, img, pos, (y * width + x) * 4, true).delta;
 
             // count the number of equal, darker and brighter adjacent pixels
             if (delta === 0) zeroes++;
@@ -125,14 +129,29 @@ function colorDelta(img1, img2, k, m, yOnly) {
         g2 = blend(img2[m + 1], a2),
         b2 = blend(img2[m + 2], a2),
 
-        y = rgb2y(r1, g1, b1) - rgb2y(r2, g2, b2);
+        y1 = rgb2y(r1, g1, b1),
+        y2 = rgb2y(r2, g2, b2),
+        y = y1 - y2;
+
+        var originalWhite = ((y1 <= 255 && (255 - y1) < 10) || (y1 > 255 && (y1 - 255) < 10));
+        var afterWhite = ((y2 <= 255 && (255 - y2) < 10) || (y2 > 255 && (y2 - 255) < 10));
+        var diffResult = 0;
+        if (originalWhite && !afterWhite) {
+            diffResult = 1;
+        } else if (originalWhite && afterWhite) {
+            diffResult = 0;
+        } else if (!originalWhite && afterWhite) {
+            diffResult = -1;
+        } else if (!originalWhite && !afterWhite) {
+            diffResult = 0;
+        }
 
     if (yOnly) return y; // brightness difference only
 
     var i = rgb2i(r1, g1, b1) - rgb2i(r2, g2, b2),
         q = rgb2q(r1, g1, b1) - rgb2q(r2, g2, b2);
 
-    return 0.5053 * y * y + 0.299 * i * i + 0.1957 * q * q;
+    return { delta: 0.5053 * y * y + 0.299 * i * i + 0.1957 * q * q, diffResult: diffResult};
 }
 
 function rgb2y(r, g, b) { return r * 0.29889531 + g * 0.58662247 + b * 0.11448223; }
